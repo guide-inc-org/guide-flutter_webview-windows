@@ -55,7 +55,15 @@ bool TextureBridge::Start() {
       static_cast<ABI::Windows::Graphics::DirectX::DirectXPixelFormat>(
           kPixelFormat),
       kNumBuffers, size);
-  assert(frame_pool_);
+  // Patched (Mức A): CreateCaptureFramePool can return null when the
+  // underlying D3D11 device is unusable (e.g. user disabled the GPU in
+  // Device Manager or device was removed). Fail gracefully instead of
+  // asserting and popping a Visual C++ Runtime crash dialog.
+  if (!frame_pool_) {
+    std::cerr << "Failed to create capture frame pool (D3D11 device lost?)"
+              << std::endl;
+    return false;
+  }
 
   frame_pool_->add_FrameArrived(
       Microsoft::WRL::Callback<ABI::Windows::Foundation::ITypedEventHandler<
@@ -92,18 +100,25 @@ void TextureBridge::Stop() {
 void TextureBridge::StopInternal() {
   if (is_running_) {
     is_running_ = false;
-    frame_pool_->remove_FrameArrived(on_frame_arrived_token_);
-    auto closable =
-        capture_session_.try_as<ABI::Windows::Foundation::IClosable>();
-    assert(closable);
-    closable->Close();
-    capture_session_ = nullptr;
+    // Patched (Mức A): frame_pool_ may be null if Start() failed midway.
+    if (frame_pool_) {
+      frame_pool_->remove_FrameArrived(on_frame_arrived_token_);
+    }
+    if (capture_session_) {
+      auto closable =
+          capture_session_.try_as<ABI::Windows::Foundation::IClosable>();
+      if (closable) {
+        closable->Close();
+      }
+      capture_session_ = nullptr;
+    }
   }
 }
 
 void TextureBridge::OnFrameArrived() {
   const std::lock_guard<std::mutex> lock(mutex_);
-  if (!is_running_) {
+  // Patched (Mức A): frame_pool_ can be null after a failed Start.
+  if (!is_running_ || !frame_pool_) {
     return;
   }
 
@@ -124,7 +139,8 @@ void TextureBridge::OnFrameArrived() {
     }
   }
 
-  if (needs_update_) {
+  // Patched (Mức A): also guard the Recreate call.
+  if (needs_update_ && frame_pool_) {
     ABI::Windows::Graphics::SizeInt32 size;
     capture_item_->get_Size(&size);
     frame_pool_->Recreate(
