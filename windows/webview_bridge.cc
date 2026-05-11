@@ -5,7 +5,11 @@
 
 #include <format>
 
+#ifdef HAVE_FLUTTER_D3D_TEXTURE
 #include "texture_bridge_gpu.h"
+#else
+#include "texture_bridge_fallback.h"
+#endif
 
 namespace {
 constexpr auto kErrorInvalidArgs = "invalidArguments";
@@ -140,6 +144,7 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger* messenger,
                              GraphicsContext* graphics_context,
                              std::unique_ptr<Webview> webview)
     : webview_(std::move(webview)), texture_registrar_(texture_registrar) {
+#ifdef HAVE_FLUTTER_D3D_TEXTURE
   texture_bridge_ =
       std::make_unique<TextureBridgeGpu>(graphics_context, webview_->surface());
 
@@ -151,6 +156,17 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger* messenger,
               size_t height) -> const FlutterDesktopGpuSurfaceDescriptor* {
             return bridge->GetSurfaceDescriptor(width, height);
           }));
+#else
+  texture_bridge_ = std::make_unique<TextureBridgeFallback>(
+      graphics_context, webview_->surface());
+
+  flutter_texture_ =
+      std::make_unique<flutter::TextureVariant>(flutter::PixelBufferTexture(
+          [bridge = static_cast<TextureBridgeFallback*>(texture_bridge_.get())](
+              size_t width, size_t height) -> const FlutterDesktopPixelBuffer* {
+            return bridge->CopyPixelBuffer(width, height);
+          }));
+#endif
 
   texture_id_ = texture_registrar->RegisterTexture(flutter_texture_.get());
   texture_bridge_->SetOnFrameAvailable(
@@ -324,8 +340,7 @@ void WebviewBridge::RegisterEventHandlers() {
 }
 
 void WebviewBridge::OnPermissionRequested(
-    const std::string& url,
-    WebviewPermissionKind permissionKind,
+    const std::string& url, WebviewPermissionKind permissionKind,
     bool isUserInitiated,
     Webview::WebviewPermissionRequestedCompleter completer) {
   auto args = std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
