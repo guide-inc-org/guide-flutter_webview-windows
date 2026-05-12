@@ -55,8 +55,16 @@ class WebviewWindowsPlugin : public flutter::Plugin {
   virtual ~WebviewWindowsPlugin();
 
  private:
-  std::unique_ptr<WebviewPlatform> platform_;
-  std::unique_ptr<WebviewHost> webview_host_;
+  // platform_ and webview_host_ are process-wide so that multiple plugin
+  // instances (one per FlutterEngine — main + desktop_multi_window
+  // sub-windows) share a single CoreWebView2Environment and a single
+  // DispatcherQueueController. WebView2 doesn't support multiple
+  // CoreWebView2Environment instances in the same process; the resulting
+  // collision on user data folder lock + composition visual ownership made
+  // CreateCoreWebView2CompositionController fail with E_INVALIDARG after
+  // any isolate switch.
+  static std::unique_ptr<WebviewPlatform> platform_;
+  static std::unique_ptr<WebviewHost> webview_host_;
   std::unordered_map<int64_t, std::unique_ptr<WebviewBridge>> instances_;
 
   WNDCLASS window_class_ = {};
@@ -72,6 +80,10 @@ class WebviewWindowsPlugin : public flutter::Plugin {
       const flutter::MethodCall<flutter::EncodableValue>& method_call,
       std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
 };
+
+// static member definitions
+std::unique_ptr<WebviewPlatform> WebviewWindowsPlugin::platform_;
+std::unique_ptr<WebviewHost> WebviewWindowsPlugin::webview_host_;
 
 // static
 void WebviewWindowsPlugin::RegisterWithRegistrar(
@@ -97,12 +109,17 @@ WebviewWindowsPlugin::WebviewWindowsPlugin(flutter::TextureRegistrar* textures,
     : textures_(textures), messenger_(messenger) {
   window_class_.lpszClassName = L"FlutterWebviewMessage";
   window_class_.lpfnWndProc = &DefWindowProc;
+  // RegisterClass is a no-op if the class is already registered by another
+  // plugin instance — return value not checked, which is fine.
   RegisterClass(&window_class_);
 }
 
 WebviewWindowsPlugin::~WebviewWindowsPlugin() {
   instances_.clear();
-  UnregisterClass(window_class_.lpszClassName, nullptr);
+  // Do NOT UnregisterClass: the window class is shared between plugin
+  // instances (it lives in the process-wide atom table). Unregistering it
+  // here would invalidate HWNDs still held by other live plugin instances.
+  // The OS reclaims it at process exit.
 }
 
 void WebviewWindowsPlugin::HandleMethodCall(
