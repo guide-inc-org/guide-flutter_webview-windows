@@ -90,6 +90,14 @@ Webview::Webview(
 }
 
 Webview::~Webview() {
+  // Microsoft docs require Close() on the UI thread before releasing the
+  // controller. Without this, when the parent HWND is torn down (e.g.
+  // desktop_multi_window destroys a sub-window's FlutterEngine), WebView2's
+  // internal threads keep pumping messages into the now-detached child
+  // windows and the process crashes.
+  if (webview_controller_) {
+    webview_controller_->Close();
+  }
   if (owns_window_) {
     DestroyWindow(hwnd_);
   }
