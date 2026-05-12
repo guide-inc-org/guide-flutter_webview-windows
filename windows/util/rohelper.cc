@@ -57,6 +57,7 @@ RoHelper::RoHelper(RO_INIT_TYPE init_type)
       mFpRoInitialize(nullptr),
       mFpRoUninitialize(nullptr),
       mWinRtAvailable(false),
+      mDidInitialize(false),
       mComBaseModule(nullptr),
       mCoreMessagingModule(nullptr) {
 #ifdef WINUWP
@@ -118,15 +119,26 @@ RoHelper::RoHelper(RO_INIT_TYPE init_type)
 
   auto result = RoInitialize(init_type);
 
-  if (SUCCEEDED(result) || result == S_FALSE || result == RPC_E_CHANGED_MODE) {
+  // RPC_E_CHANGED_MODE means another component already initialized this
+  // thread's COM apartment in an incompatible mode (e.g. desktop_multi_window
+  // sub-windows initialize MTA before our plugin is registered). We can still
+  // use WinRT factories on the thread, but we MUST NOT call RoUninitialize
+  // because we never incremented the apartment's init count — doing so would
+  // decrement someone else's ref and corrupt the thread's COM state on
+  // teardown (silent process crash when the sub-window closes).
+  if (SUCCEEDED(result) || result == S_FALSE) {
     mWinRtAvailable = true;
+    mDidInitialize = true;
+  } else if (result == RPC_E_CHANGED_MODE) {
+    mWinRtAvailable = true;
+    mDidInitialize = false;
   }
 #endif
 }
 
 RoHelper::~RoHelper() {
 #ifndef WINUWP
-  if (mWinRtAvailable) {
+  if (mDidInitialize) {
     RoUninitialize();
   }
 
