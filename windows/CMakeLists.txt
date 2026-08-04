@@ -69,10 +69,13 @@ else()
     "texture_bridge_fallback.cc"
     "util/cpuid/cpuinfo.cc"
   )
-  # Enable AVX2 for pixel buffer conversions
-  if(MSVC)
-    target_compile_options(${PLUGIN_NAME} PRIVATE "/arch:AVX2" "/await")
-  endif()
+  # Do NOT add /arch:AVX2 here (it used to be set target-wide). That flag raises
+  # the codegen baseline for every source file, so MSVC emits VEX-encoded
+  # instructions into unrelated code and the plugin DLL faults with
+  # STATUS_ILLEGAL_INSTRUCTION (0xC000001D) at load time on CPUs without AVX --
+  # Pentium Silver / Celeron / Atom parts such as the Jasper Lake N6005. The
+  # pixel buffer conversion in util/swizzle.h uses SSSE3 instead, which needs no
+  # /arch flag and is within a few percent of AVX2 for this bandwidth-bound copy.
 endif()
 
 apply_standard_settings(${PLUGIN_NAME})
