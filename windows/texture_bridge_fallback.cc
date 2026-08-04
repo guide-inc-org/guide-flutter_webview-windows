@@ -2,8 +2,20 @@
 
 #include <iostream>
 
+#include "util/diag.h"
 #include "util/direct3d11.interop.h"
 #include "util/swizzle.h"
+
+namespace {
+
+// TEMPORARY DIAGNOSTICS -- see util/diag.h. Logs the first few occurrences of
+// an event and then every 300th, so a steady-state stream stays readable.
+bool ShouldLog(unsigned int& counter) {
+  ++counter;
+  return counter <= 3u || (counter % 300u) == 0u;
+}
+
+}  // namespace
 
 TextureBridgeFallback::TextureBridgeFallback(
     GraphicsContext* graphics_context,
@@ -74,6 +86,35 @@ void TextureBridgeFallback::ProcessFrame(
     RGBA_to_BGRA(reinterpret_cast<uint32_t*>(backing_pixel_buffer_.get()),
                  static_cast<const uint32_t*>(mappedResource.pData), height,
                  src_pitch_in_pixels, width);
+
+    if (diag::enabled()) {
+      static unsigned int frame_counter = 0;
+      if (ShouldLog(frame_counter)) {
+        // Sampled rather than exhaustive: we only need to know whether the
+        // converted buffer is entirely blank, not its exact contents.
+        const auto* pixels =
+            reinterpret_cast<const uint32_t*>(backing_pixel_buffer_.get());
+        const size_t pixel_count = static_cast<size_t>(width) * height;
+        size_t sampled = 0;
+        size_t nonzero = 0;
+        size_t opaque = 0;
+        for (size_t i = 0; i < pixel_count; i += 97) {
+          ++sampled;
+          if (pixels[i] != 0) {
+            ++nonzero;
+          }
+          if ((pixels[i] >> 24) != 0) {
+            ++opaque;
+          }
+        }
+
+        std::cerr << "[webview_windows] frame #" << frame_counter << " " << width
+                  << "x" << height << " src_format=" << desc.Format
+                  << " row_pitch=" << mappedResource.RowPitch << " sampled="
+                  << sampled << " nonzero=" << nonzero << " alpha_nonzero="
+                  << opaque << std::endl;
+      }
+    }
   }
 
   device_context->Unmap(staging_texture, 0);
@@ -117,11 +158,26 @@ const FlutterDesktopPixelBuffer* TextureBridgeFallback::CopyPixelBuffer(
   const std::lock_guard<std::mutex> lock(mutex_);
 
   if (!is_running_) {
+    if (diag::enabled()) {
+      static unsigned int not_running_counter = 0;
+      if (ShouldLog(not_running_counter)) {
+        std::cerr << "[webview_windows] CopyPixelBuffer(" << width << "x"
+                  << height << "): not running, no buffer delivered (#"
+                  << not_running_counter << ")" << std::endl;
+      }
+    }
     return nullptr;
   }
 
   if (last_frame_) {
     ProcessFrame(last_frame_);
+  } else if (diag::enabled()) {
+    static unsigned int no_frame_counter = 0;
+    if (ShouldLog(no_frame_counter)) {
+      std::cerr << "[webview_windows] CopyPixelBuffer(" << width << "x" << height
+                << "): no captured frame available yet (#" << no_frame_counter
+                << ")" << std::endl;
+    }
   }
 
   auto buffer = pixel_buffer_.get();

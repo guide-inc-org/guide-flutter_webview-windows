@@ -7,10 +7,17 @@
 #include <cassert>
 #include <iostream>
 
+#include "util/diag.h"
 #include "util/direct3d11.interop.h"
 
 namespace {
 const int kNumBuffers = 1;
+
+// TEMPORARY DIAGNOSTICS -- see util/diag.h.
+bool ShouldLog(unsigned int& counter) {
+  ++counter;
+  return counter <= 3u || (counter % 300u) == 0u;
+}
 }  // namespace
 
 TextureBridge::TextureBridge(GraphicsContext* graphics_context,
@@ -86,9 +93,16 @@ bool TextureBridge::Start() {
 
   if (SUCCEEDED(capture_session_->StartCapture())) {
     is_running_ = true;
+    if (diag::enabled()) {
+      std::cerr << "[webview_windows] capture started, item size " << size.Width
+                << "x" << size.Height << std::endl;
+    }
     return true;
   }
 
+  if (diag::enabled()) {
+    std::cerr << "[webview_windows] StartCapture failed" << std::endl;
+  }
   return false;
 }
 
@@ -149,6 +163,18 @@ void TextureBridge::OnFrameArrived() {
             kPixelFormat),
         kNumBuffers, size);
     needs_update_ = false;
+  }
+
+  if (diag::enabled()) {
+    static unsigned int arrived_counter = 0;
+    if (ShouldLog(arrived_counter)) {
+      std::cerr << "[webview_windows] OnFrameArrived #" << arrived_counter
+                << " hr=0x" << std::hex << hr << std::dec
+                << " frame=" << (frame ? "yes" : "no")
+                << " last_frame=" << (last_frame_ ? "yes" : "no")
+                << " has_frame=" << has_frame
+                << " notify=" << (frame_available_ ? "yes" : "no") << std::endl;
+    }
   }
 
   if (has_frame && frame_available_) {

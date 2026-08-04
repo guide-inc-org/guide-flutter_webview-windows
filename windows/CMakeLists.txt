@@ -67,11 +67,23 @@ else()
   message(STATUS "Building with fallback PixelBuffer texture.")
   target_sources("${PLUGIN_NAME}" PRIVATE
     "texture_bridge_fallback.cc"
+    "util/swizzle.cc"
+    "util/swizzle_avx2.cc"
     "util/cpuid/cpuinfo.cc"
   )
-  # Enable AVX2 for pixel buffer conversions
+  # Enable AVX2 for the pixel buffer conversion kernel ONLY.
+  #
+  # /arch:AVX2 must never be applied to the whole target: MSVC would then be
+  # free to emit VEX-encoded instructions in any function, including static
+  # initializers that run while the DLL is being loaded. On a CPU without AVX
+  # (Pentium Silver / Celeron N-series, Atom) the host application crashes at
+  # startup with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) before any of our code
+  # gets a chance to check CPUID. swizzle_avx2.cc is the single TU allowed to
+  # contain AVX2 code, and RGBA_to_BGRA() in swizzle.cc guards every call into
+  # it with a runtime cpuid::cpuinfo::has_avx2() check.
   if(MSVC)
-    target_compile_options(${PLUGIN_NAME} PRIVATE "/arch:AVX2" "/await")
+    set_source_files_properties("util/swizzle_avx2.cc" PROPERTIES
+      COMPILE_OPTIONS "/arch:AVX2")
   endif()
 endif()
 
